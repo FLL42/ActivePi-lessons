@@ -117,6 +117,8 @@ class Game:
 
         self.acceleration = [0, 0, 0]
 
+        self.gyro = [0, 0, 0]
+
         # Get display width & height.
         self.width = self.display.width
         self.height = self.display.height
@@ -142,16 +144,27 @@ class Game:
         # Update display. (not the obstacles because we haven't started yet)
         self.update_display()
 
+        print("Calibrating gyro in 5 seconds. Please put the MPU6050 down on a flat surface with the Z axis (chip) pointing up.")
+        time.sleep(5)
+        self.dino.calibrate_gyro()
+
         # Start the game! Call the update() function every 0.05 seconds.
         # This returns a function that will stop the loop.
-        self.stop = call_repeatedly(0.05, self.update)
+        self.stop1 = call_repeatedly(0.05, self.update)
 
-        self.stop2 = call_repeatedly(0.008, self.get_acceleration)
+        self.stop2 = call_repeatedly(0.001, self.get_acceleration)
+
+        self.stop3 = call_repeatedly(0.001, self.dino.get_gyro_angle)
+
+    def stop(self):
+        self.stop1()
+        self.stop2()
 
     def get_acceleration(self):
         """
         Get 5-sample average of acceleration.
         """
+        self.gyro = list(self.accelerometer.gyro)
         total = [0, 0, 0]
         for i in range(5):
             acceleration = self.accelerometer.acceleration
@@ -195,7 +208,6 @@ class Game:
                 # game over!
                 print("game over!")
                 self.stop()
-                self.stop2()
                 return True
         return False
 
@@ -260,6 +272,9 @@ class Dino:
         self.velocity = 0 # Relative to the last time self.jumping was JumpType.NONE -- in meters / second.
         self.jump_height = 0 # Relative to the last time self.jumping was JumpType.NONE -- in meters.
         self.last_measured_velocity = time.time_ns() / 1000000000 # in nanoseconds to be more accurate -- divided by 1 billion to get seconds.
+        self.last_measured_gyro = time.time_ns() / 1000000000
+        self.gyro_angle = [0, 0, 0]
+        self.gyro_calibration = [0, 0, 0] # This will turn into what the gyro's average values when it's not moving are.
         self.bitmap = "1" # whether the bitmap drawn is dino_run_1 or dino_run_2
 
     def get_jump_height(self):
@@ -273,21 +288,63 @@ class Dino:
         # A little bit of error can introduce a LOT of error over time with this equation,
         # which is why we will reset velocity & jump_height to 0 every time self.jumping
         # = JumpType.NONE.
-        acceleration = self.game.acceleration # (X, Y, Z) in m/s^2 (how velocity changes over time). This is an average.
-        # acceleration[2] -= 2.25
+        acceleration = list(self.game.acceleration) # (X, Y, Z) in m/s^2 (how velocity changes over time). This is an average.
+        acceleration[2] -= 2.25 # The Z axis on the accelerometer in our prototype was off on the Z axis by ~2.25 m/s^2
+        # Choose which axis to use based on gyro data.
+        current_gyro_angle = self.gyro_angle # Get current gyro angle
+        minimum = min(current_gyro_angle) # Get minimum item
+        index = current_gyro_angle.index(minimum) # Find where the minimum item is in the list. This is also the axis.
+        print(index)
         # Get the current time.
         t = time.time_ns() / 1000000000
         # Recalculate velocity.
         # acceleration[2] is the Z axis acceleration. -9.8 m/s^2 to adjust for gravity.
         # Please change 9.8 to 1.62 if you are using the ActivePi on the moon.
         # Or 3.711 if you're on Mars.
-        self.velocity = self.velocity + (acceleration[1] - 9.807) * (t - self.last_measured_velocity) # m/s
+        self.velocity = self.velocity + (acceleration[index] - 9.807) * (t - self.last_measured_velocity) # m/s
         # Now calculate the jump height!
         self.jump_height = self.jump_height + self.velocity * (t - self.last_measured_velocity)
         # Finally, update the time last measured to `t`.
         self.last_measured_velocity = t
         # TODO remove debuggy stuff
-        print(f'jump height: {self.jump_height}, acceleration: {acceleration}, velocity: {self.velocity}')
+        # print(f'jump height: {self.jump_height}, acceleration: {acceleration}, velocity: {self.velocity}, gyro: {self.gyro_angle}')
+
+    def get_gyro_angle(self):
+        """
+        Yay more calculus!
+        """
+        gyro = list(self.game.gyro) # (X, Y, Z) in degrees/second (how angle changes over time).
+        # Convert the tuple to a list, so we can modify items, and then:
+        # adjust for calibration.
+        gyro[0] -= self.gyro_calibration[0]
+        gyro[1] -= self.gyro_calibration[1]
+        gyro[2] -= self.gyro_calibration[2]
+        # Get the current time.
+        t = time.time_ns() / 1000000000
+        # Integrate. (distance = speed * time should work for gyro too -> angle = angular_velocity * time)
+        self.gyro_angle[0] += gyro[0] * (t - self.last_measured_gyro)
+        self.gyro_angle[1] += gyro[1] * (t - self.last_measured_gyro)
+        self.gyro_angle[2] += gyro[2] * (t - self.last_measured_gyro)
+        # Finally, update the time last measured to `t`.
+        self.last_measured_gyro = t
+
+    def calibrate_gyro(self):
+        """
+        Get gyro's values when it is sitting still.
+        """
+        print("Calibrating gyro...")
+        gyro_total = [0, 0, 0]
+        for i in range(100):
+            gyro = self.game.accelerometer.gyro
+            gyro_total[0] += gyro[0]
+            gyro_total[1] += gyro[1]
+            gyro_total[2] += gyro[2]
+        gyro_total[0] /= 100.0
+        gyro_total[1] /= 100.0
+        gyro_total[2] /= 100.0
+        self.gyro_calibration = gyro_total
+        print("Done, thank you!")
+        print(f"Calibration values: {self.gyro_calibration}")
 
     def update(self):
         """
@@ -302,6 +359,7 @@ class Dino:
         #     self.jumping = JumpType.NONE
         self.game.draw.rectangle([(18, self.jumping.value), (18 + 10 + 1, self.jumping.value + 11 + 1)], fill=0) # Erase the old dino
         self.get_jump_height() # Update our jump height
+        # self.get_gyro_angle() # Update our gyro angles
         if self.jump_height >= 0.3: # High jump >= 0.3 meters (about 1 foot)
             self.jumping = JumpType.HIGH
         elif self.jump_height >= 0.1: # Low jump >= 0.1 meters (about 4 inches)
