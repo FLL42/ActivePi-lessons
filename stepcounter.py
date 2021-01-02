@@ -5,9 +5,30 @@ import busio
 import adafruit_mpu6050
 from adafruit_extended_bus import ExtendedI2C as I2C # sudo pip3 install adafruit-extended-bus
 import math
+import adafruit_ssd1306
+from PIL import Image, ImageDraw, ImageFont
  
 i2c = I2C(11) # GPIO23 = SDA, GPIO24 = SCL for this interface
 mpu = adafruit_mpu6050.MPU6050(i2c)
+i2c_display = busio.I2C(SCL, SDA)
+
+
+#this part is going to be setting up the OLED display so you can print the steps onto it. 
+
+display = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c_display)
+
+width = display.width
+height = display.height
+
+image = Image.new('1', (width, height))
+
+draw = ImageDraw.Draw(image)
+
+draw.rectangle((0, 0, width, height), outline=0, fill=0)
+
+font = ImageFont.load("Mario-Kart-DS.ttf")
+
+
 
 # These two lines are initializing the connection between the accelerometer and the raspberry pi. 
 
@@ -29,7 +50,9 @@ steptrue = False #since our code is a while true to award someone a step when th
 #not just 1 step each time it goes over
 #when someone takes a step, they are over the threshold for maybe .2 seconds, then they will get awarded steps of the number of times the loop runs in .2 seconds. 
 #if the bool is there, it awards only one step
+
 while True: #run forever
+    draw.rectangle((0, 0, width, height), outline=0, fill=0)
     sqrtof = (mpu.acceleration[0])**2 + (mpu.acceleration[1])**2 + (mpu.acceleration[2])**2 #total acceleration for all three axes
     totalaccel = math.sqrt(sqrtof) #this is the second part of the formula for the combined acceleration of all three axes
     if totalaccel>threshold and steptrue == False: #When someone takes a step and the bool is false(meaning now it registers a step)
@@ -40,9 +63,14 @@ while True: #run forever
     if totalaccel<threshold and steptrue == True:   #the person was over the threshold but has now dipped under, setting the bool back to false
         steptrue = 0
 
+        draw.text((32,16), f'Steps - {steps}', font=font, fill=255)
         print(f'Steps - {steps}') #this is when it will print the steps
     else: #too slow speed up
         pass
     time.sleep(0.01)
+
+
+
+
 
 
