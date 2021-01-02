@@ -1,5 +1,5 @@
 # Import modules.
-import time, math, threading, random
+import time, math, threading, random, numpy
 from threading import Event
 from board import SCL, SDA
 import busio
@@ -70,22 +70,30 @@ def call_repeatedly(interval, function, *args):
     """
     Helper function to continuously run a function in the background (on a separate thread).
     """
-    is_stopped = Event() # an Event has a function to wait until a flag is true or until a timeout is hit.
+    stopped = threading.Event() # an Event has a function to wait until a flag is true or until a timeout is hit.
     # This makes it very useful for us because the loop can be stopped by setting the flag to True,
     # and if the flag isn't True, we can just wait. For more info, see here:
     # https://docs.python.org/3/library/threading.html#threading.Event
     def loop():
         while not stopped.wait(interval): # wait until the interval has passed or until the flag has been set
             function(*args) # once one of those things has happened, call the function with the provided arguments
-    Thread(target=loop).start() # start the loop in the background,    
+    threading.Thread(target=loop).start() # start the loop in the background,    
     return stopped.set # and return the function to call to set the flag (described above)
+
+def bitmap(bmp):
+    """
+    Helper function to convert a image array (such as in the bitmaps dictionary)
+    into a PIL-friendly bitmap.
+    """
+    # Thanks to here: https://stackoverflow.com/questions/37558523/converting-2d-numpy-array-of-grayscale-values-to-a-pil-image
+    return Image.fromarray(numpy.uint8(numpy.array(bmp) * 255), 'L') # Convert to a numpy array, then convert 0-255 from 0-1, then turn into PIL image
 
 # Create class for the game that has variables for the display and other things critical to the game.
 class Game:
     def __init__(self, min_speed = 10, max_speed = 26):
         # Create I2C interfaces.
         self.i2c_display = busio.I2C(SCL, SDA)
-        self.i2c_accel = I2C(3) # GPIO23 = SDA, GPIO24 = SCL -- enable the i2c-gpio overlay!
+        self.i2c_accel = I2C(11) # GPIO23 = SDA, GPIO24 = SCL -- enable the i2c-gpio overlay!
 
         # Update minimum and maximum speeds (in pixels / second)
         self.min_speed = min_speed
@@ -99,49 +107,51 @@ class Game:
         self.score = 0
 
         # Create a dino 🦖
-        self.dino = Dino()
+        self.dino = Dino(self)
 
         # The PiOLED is 128 pixels x 32 pixels, and communicates over I2C, so we need to give it the I2C interface created above.
         self.display = adafruit_ssd1306.SSD1306_I2C(128, 32, self.i2c_display)
 
         # Initialize the accelerometer.
         self.accelerometer = adafruit_mpu6050.MPU6050(self.i2c_accel)
+        
+        self.accelerometer.range = adafruit_mpu6050.Range.RANGE_2_G
 
         # Get display width & height.
-        self.width = display.width
-        self.height = display.height
+        self.width = self.display.width
+        self.height = self.display.height
 
         # Create blank image for drawing.
         # Make sure to create image with mode '1' for 1-bit color.
         # 1-bit color means the only options are full brightness (fill=255) or off (fill=0) -- this display is monochrome.
-        self.image = Image.new('1', (width, height))
+        self.image = Image.new('1', (self.width, self.height))
 
         # Get drawing object to draw on image.
-        self.draw = ImageDraw.Draw(image)
+        self.draw = ImageDraw.Draw(self.image)
 
         # Draw a black filled box to clear the image.
-        self.draw.rectangle((0, 0, width, height), outline=0, fill=0)
+        self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
 
         # Draw a line at the bottom of the screen (height = 31 & width = 127 because they start at 0, so we are drawing from (0, 31) to (128, 31)).
         # This is the ground for the dino game. The line also is at full brightness (fill=255), 3 pixels high (width=3), and has curved edges (joint="curve").
-        # self.draw.line([(0, height), (width, height)], fill=255, width=3, joint="curve")
+        # self.draw.line([(0, self.height), (self.width, self.height)], fill=255, width=3, joint="curve")
 
         # Draw the ground for the dino game (see where we make the bitmap on line 18). Fill = white (255). TODO get final line #
-        self.draw.bitmap((0, 27), bitmaps["ground"], fill=255)
+        self.draw.bitmap((0, 27), bitmap(bitmaps["ground"]), fill=255)
 
         # Update display. (not the obstacles because we haven't started yet)
         self.update_display()
 
         # Start the game! Call the update() function every 0.05 seconds.
         # This returns a function that will stop the loop.
-        self.stop = call_repeatedly(0.05, self.update)
+        self.stop = call_repeatedly(0.01, self.update)
 
     def update_display(self):
         """
         Updates the display.
         """
-        display.image(image)
-        display.show()
+        self.display.image(self.image)
+        self.display.show()
 
     def detect_collision(self):
         """
@@ -210,7 +220,7 @@ class Obstacle:
             self.position -= 1 # move the obstacle one pixel to the left
             if self.position == 0: # if the obstacle's position is 0 (all the way to the left),
                 self.game.obstacles.remove(self) # remove it from the list of obstacles
-            self.game.draw.bitmap((self.position, 27 - self.obstacle_type.value[1]), self.obstacle_type.value[3], fill=255) # Redraw the obstacle @ x = position, y = (27 (which is the top of the ground -- y = 0 is the top of the display) - the obstacle's height).
+            self.game.draw.bitmap((self.position, 27 - self.obstacle_type.value[1]), bitmap(self.obstacle_type.value[3]), fill=255) # Redraw the obstacle @ x = position, y = (27 (which is the top of the ground -- y = 0 is the top of the display) - the obstacle's height).
             self.last_update_time = time.time() # update the last updated time
             if not self.game.detect_collision():
                 self.game.score += 1 # Increase the score by 1
@@ -218,8 +228,8 @@ class Obstacle:
 class JumpType(Enum): # An enum is basically a way to assign names to values.
     # Now we can use JumpType.HIGH and JumpType.LOW instead of some arbitrary variables.
     # The raw values are the height at which to draw the dino -- located at the top of the dino. (bottom of screen = 31, bottom of ground = 27, bottom of ground - height of dino = 16)
-    LOW = 22
-    HIGH = 30
+    LOW = 10
+    HIGH = 2
     NONE = 16
 
 class Dino:
@@ -246,28 +256,30 @@ class Dino:
         # which is why we will reset velocity & jump_height to 0 every time self.jumping
         # = JumpType.NONE.
         acceleration = self.game.accelerometer.acceleration # (X, Y, Z) in m/s^2 (how velocity changes over time)
+        # acceleration[2] -= 2.25
         # Get the current time.
         t = time.time_ns() / 1000000000
         # Recalculate velocity.
-        # acceleration[3] is the Z axis acceleration. +9.8 m/s^2 to adjust for gravity.
+        # acceleration[2] is the Z axis acceleration. -9.8 m/s^2 to adjust for gravity.
         # Please change 9.8 to 1.62 if you are using the ActivePi on the moon.
         # Or 3.711 if you're on Mars.
-        self.velocity = self.velocity + (acceleration[3] + 9.8) * (t - self.last_measured_velocity)
+        self.velocity = self.velocity + (acceleration[0] - 9.807) * (t - self.last_measured_velocity)
         # Now calculate the jump height!
         self.jump_height = self.jump_height + self.velocity * (t - self.last_measured_velocity)
         # Finally, update the time last measured to `t`.
         self.last_measured_velocity = t
+        # print(f'jump height: {self.jump_height}, acceleration: {acceleration}, gyro: {self.game.accelerometer.gyro}, temp: {self.game.accelerometer.temperature}')
 
     def update(self):
         """
         Updates what jumping state we are in (from the accelerometer) and redraws the dino accordingly.
         """
         # acceleration = self.game.accelerometer.acceleration # (X, Y, Z) in m/s^2
-        # if acceleration[3] > 8: # https://www.quora.com/How-much-force-in-Newtons-on-average-does-someone-exert-when-they-jump says a high jump is 19.8 m/s^2 of acceleration. -9.8 m/s^2 from gravity and you get 10 m/s^2, so >8 should be a high jump. TODO test with real device so I can get values for me
+        # if acceleration[2] > 8: # https://www.quora.com/How-much-force-in-Newtons-on-average-does-someone-exert-when-they-jump says a high jump is 19.8 m/s^2 of acceleration. -9.8 m/s^2 from gravity and you get 10 m/s^2, so >8 should be a high jump. TODO test with real device so I can get values for me
         #     self.jumping = JumpType.HIGH
-        # elif acceleration[3] > -1.8: # > 10 m/s^2 (-9.8 m/s/s for gravity)
+        # elif acceleration[2] > -1.8: # > 10 m/s^2 (-9.8 m/s/s for gravity)
         #     self.jumping = JumpType.LOW
-        # elif acceleration[3] < -5: # if acceleration < -4.8 m/s/s, the person is not jumping. TODO maybe change this to velocity later (separate thread constantly measuring velocity using V = Vsub0 + at)
+        # elif acceleration[2] < -5: # if acceleration < -4.8 m/s/s, the person is not jumping. TODO maybe change this to velocity later (separate thread constantly measuring velocity using V = Vsub0 + at)
         #     self.jumping = JumpType.NONE
         self.game.draw.rectangle([(18, self.jumping.value), (18 + 10 + 1, self.jumping.value + 11 + 1)], fill=0) # Erase the old dino
         self.get_jump_height() # Update our jump height
@@ -275,15 +287,18 @@ class Dino:
             self.jumping = JumpType.HIGH
         elif self.jump_height >= 0.1: # Low jump >= 0.1 meters (about 4 inches)
             self.jumping = JumpType.LOW
-        elif self.velocity <= 0: # No jump -- velocity is less than or equal to 0
+        elif self.velocity <= 0.5: # No jump -- velocity is less than or equal to 0
             self.jumping = JumpType.NONE
             # Also reset velocity + jump height
             self.velocity = 0
             self.jump_height = 0
-        self.game.draw.bitmap((18, self.jumping.value), bitmaps["dino_run_"+self.bitmap], fill=255) # Draw the dino at x=18, y=JumpType raw value
+        self.game.draw.bitmap((18, self.jumping.value), bitmap(bitmaps["dino_run_"+self.bitmap]), fill=255) # Draw the dino at x=18, y=JumpType raw value
+        # print(f'coordinates: {(18, self.jumping.value)}')
         # Change which bitmap we are drawing for the next draw to animate.
         self.bitmap = "1" if self.bitmap == "2" else "2"
         # https://electronics.stackexchange.com/questions/112421/measuring-speed-with-3axis-accelerometer
 
 # Detect jumping -- while acceleration on the Z axis is going up (or more + than normal gravity), you are jumping.
 # When acceleration goes back down, not jumping anymore.
+
+game = Game()
