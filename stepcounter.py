@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
  
 i2c = I2C(11) # GPIO23 = SDA, GPIO24 = SCL for this interface
 mpu = adafruit_mpu6050.MPU6050(i2c)
-i2c_display = busio.I2C(SCL, SDA)
+i2c_display = busio.I2C(board.SCL, board.SDA)
 
 
 #this part is going to be setting up the OLED display so you can print the steps onto it. 
@@ -26,9 +26,7 @@ draw = ImageDraw.Draw(image)
 
 draw.rectangle((0, 0, width, height), outline=0, fill=0)
 
-font = ImageFont.load("Mario-Kart-DS.ttf")
-
-
+font = ImageFont.truetype("Mario-Kart-DS.ttf", size=32)
 
 # These two lines are initializing the connection between the accelerometer and the raspberry pi. 
 
@@ -52,7 +50,6 @@ steptrue = False #since our code is a while true to award someone a step when th
 #if the bool is there, it awards only one step
 
 while True: #run forever
-    draw.rectangle((0, 0, width, height), outline=0, fill=0)
     sqrtof = (mpu.acceleration[0])**2 + (mpu.acceleration[1])**2 + (mpu.acceleration[2])**2 #total acceleration for all three axes
     totalaccel = math.sqrt(sqrtof) #this is the second part of the formula for the combined acceleration of all three axes
     if totalaccel>threshold and steptrue == False: #When someone takes a step and the bool is false(meaning now it registers a step)
@@ -63,10 +60,13 @@ while True: #run forever
     if totalaccel<threshold and steptrue == True:   #the person was over the threshold but has now dipped under, setting the bool back to false
         steptrue = 0
 
-        draw.text((32,16), f'Steps - {steps}', font=font, fill=255)
+        draw.rectangle((0, 0, width, height), outline=0, fill=0)
+        draw.text((42,0), f'{steps}', font=font, fill=255)
         print(f'Steps - {steps}') #this is when it will print the steps
     else: #too slow speed up
         pass
+    display.image(image)
+    display.show()
     time.sleep(0.01)
 
 
