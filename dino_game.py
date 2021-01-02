@@ -114,8 +114,8 @@ class Game:
 
         # Initialize the accelerometer.
         self.accelerometer = adafruit_mpu6050.MPU6050(self.i2c_accel)
-        
-        self.accelerometer.range = adafruit_mpu6050.Range.RANGE_2_G
+
+        self.acceleration = [0, 0, 0]
 
         # Get display width & height.
         self.width = self.display.width
@@ -144,7 +144,24 @@ class Game:
 
         # Start the game! Call the update() function every 0.05 seconds.
         # This returns a function that will stop the loop.
-        self.stop = call_repeatedly(0.01, self.update)
+        self.stop = call_repeatedly(0.05, self.update)
+
+        self.stop2 = call_repeatedly(0.008, self.get_acceleration)
+
+    def get_acceleration(self):
+        """
+        Get 5-sample average of acceleration.
+        """
+        total = [0, 0, 0]
+        for i in range(5):
+            acceleration = self.accelerometer.acceleration
+            total[0] += acceleration[0]
+            total[1] += acceleration[1]
+            total[2] += acceleration[2]
+        total[0] /= 5.0
+        total[1] /= 5.0
+        total[2] /= 5.0
+        self.acceleration = total
 
     def update_display(self):
         """
@@ -178,6 +195,7 @@ class Game:
                 # game over!
                 print("game over!")
                 self.stop()
+                self.stop2()
                 return True
         return False
 
@@ -255,7 +273,7 @@ class Dino:
         # A little bit of error can introduce a LOT of error over time with this equation,
         # which is why we will reset velocity & jump_height to 0 every time self.jumping
         # = JumpType.NONE.
-        acceleration = self.game.accelerometer.acceleration # (X, Y, Z) in m/s^2 (how velocity changes over time)
+        acceleration = self.game.acceleration # (X, Y, Z) in m/s^2 (how velocity changes over time). This is an average.
         # acceleration[2] -= 2.25
         # Get the current time.
         t = time.time_ns() / 1000000000
@@ -263,12 +281,13 @@ class Dino:
         # acceleration[2] is the Z axis acceleration. -9.8 m/s^2 to adjust for gravity.
         # Please change 9.8 to 1.62 if you are using the ActivePi on the moon.
         # Or 3.711 if you're on Mars.
-        self.velocity = self.velocity + (acceleration[0] - 9.807) * (t - self.last_measured_velocity)
+        self.velocity = self.velocity + (acceleration[1] - 9.807) * (t - self.last_measured_velocity) # m/s
         # Now calculate the jump height!
         self.jump_height = self.jump_height + self.velocity * (t - self.last_measured_velocity)
         # Finally, update the time last measured to `t`.
         self.last_measured_velocity = t
-        # print(f'jump height: {self.jump_height}, acceleration: {acceleration}, gyro: {self.game.accelerometer.gyro}, temp: {self.game.accelerometer.temperature}')
+        # TODO remove debuggy stuff
+        print(f'jump height: {self.jump_height}, acceleration: {acceleration}, velocity: {self.velocity}')
 
     def update(self):
         """
@@ -287,7 +306,7 @@ class Dino:
             self.jumping = JumpType.HIGH
         elif self.jump_height >= 0.1: # Low jump >= 0.1 meters (about 4 inches)
             self.jumping = JumpType.LOW
-        elif self.velocity <= 0.5: # No jump -- velocity is less than or equal to 0
+        if abs(self.game.acceleration[1] - 9.8) < 0.5 : # No jump -- acceleration close to gravity
             self.jumping = JumpType.NONE
             # Also reset velocity + jump height
             self.velocity = 0
