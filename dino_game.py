@@ -115,9 +115,14 @@ class Game:
         # Initialize the accelerometer.
         self.accelerometer = adafruit_mpu6050.MPU6050(self.i2c_accel)
 
+        # Variable to hold acceleration (updated often from the MPU6050)
         self.acceleration = [0, 0, 0]
 
+        # Variable to hold gyro data (updated often from the MPU6050)
         self.gyro = [0, 0, 0]
+
+        # Time that we last added an obstacle
+        self.last_added_obstacle = time.time_ns() / 1000000000
 
         # Get display width & height.
         self.width = self.display.width
@@ -144,8 +149,8 @@ class Game:
         # Update display. (not the obstacles because we haven't started yet)
         self.update_display()
 
-        print("Calibrating gyro in 5 seconds. Please put the MPU6050 down on a flat surface with the Z axis (chip) pointing up.")
-        time.sleep(5)
+        print("Calibrating gyro in 3 seconds. Please put the MPU6050 down on a flat surface with the Z axis (chip) pointing up.")
+        time.sleep(3)
         self.dino.calibrate_gyro()
 
         # Start the game! Call the update() function every 0.05 seconds.
@@ -175,6 +180,7 @@ class Game:
         total[1] /= 5.0
         total[2] /= 5.0
         self.acceleration = total
+        self.dino.get_jump_height()
 
     def update_display(self):
         """
@@ -196,13 +202,13 @@ class Game:
                 dino_pixels.append((x, y))
         for obstacle in self.obstacles:
             obstacle_top_left = (obstacle.position, 27 - obstacle.obstacle_type.value[1])
-            obstacle_bitmap = obstacle.obstacle_type.value[3]
+            obstacle_bitmap = obstacle.obstacle_type.value[2]
             obstacle_pixels = []
             # Make list of pixels (coordinates) that are obstacles (so only the cactus, not the bounding box)
             for y in range(len(obstacle_bitmap)):
                 for x in range(len(obstacle_bitmap[0])):
                     if obstacle_bitmap[y][x] == 1:
-                        obstacle_pixels.append((obstacle_top_left[0] + x), (obstacle_top_left[1] + y))
+                        obstacle_pixels.append(((obstacle_top_left[0] + x), (obstacle_top_left[1] + y)))
             if len(set(dino_pixels).intersection(obstacle_pixels)) > 0:
                 # If there is at least one set of coordinates overlapping the dino and the obstacle,
                 # game over!
@@ -215,11 +221,18 @@ class Game:
     def update(self):
         """
         Redraws the game's obstacles (if necessary), updates the dino, and updates the display.
-        Called in the background, and then again 0.01 seconds after it finishes, and so on in a loop (see the end of __init__).
+        Called in the background, and then again 0.05 seconds after it finishes, and so on in a loop (see the end of __init__).
         """
         self.dino.update()
+        current_time = time.time_ns() / 1000000000
+        if (current_time - self.last_added_obstacle) >= random.randint(3, 7):
+            obstacle_type = random.choice(list(ObstacleType)) # choose random obstacle type
+            obstacle = Obstacle(self, obstacle_type=obstacle_type)
+            self.obstacles.append(obstacle)
+            self.last_added_obstacle = current_time
+            self.current_speed += 1
         for obstacle in self.obstacles:
-            obstacle.update()
+            threading.Thread(target=obstacle.update).start()
         self.update_display()
 
 class ObstacleType(Enum):
@@ -247,10 +260,10 @@ class Obstacle:
         if (time.time() - self.last_update_time) >= (1.0 / self.game.current_speed): # if the time passed since we last updated the obstacle is >= than 1 second divided by the game's current speed (in pixels per second to move the obstacle), then:
             self.game.draw.rectangle([(self.position, 27 - self.obstacle_type.value[1]), (self.position + self.obstacle_type.value[0] + 1, 27 + 1)], fill=0) # Erase the current obstacle so we can redraw it -- "the second point is just outside the drawn rectangle"
             # according to the documentation: https://pillow.readthedocs.io/en/stable/reference/ImageDraw.html#PIL.ImageDraw.ImageDraw.rectangle
-            self.position -= 1 # move the obstacle one pixel to the left
+            self.position -= int(self.game.current_speed / 3) # move the obstacle one pixel to the left
             if self.position == 0: # if the obstacle's position is 0 (all the way to the left),
                 self.game.obstacles.remove(self) # remove it from the list of obstacles
-            self.game.draw.bitmap((self.position, 27 - self.obstacle_type.value[1]), bitmap(self.obstacle_type.value[3]), fill=255) # Redraw the obstacle @ x = position, y = (27 (which is the top of the ground -- y = 0 is the top of the display) - the obstacle's height).
+            self.game.draw.bitmap((self.position, 27 - self.obstacle_type.value[1]), bitmap(self.obstacle_type.value[2]), fill=255) # Redraw the obstacle @ x = position, y = (27 (which is the top of the ground -- y = 0 is the top of the display) - the obstacle's height).
             self.last_update_time = time.time() # update the last updated time
             if not self.game.detect_collision():
                 self.game.score += 1 # Increase the score by 1
@@ -295,6 +308,8 @@ class Dino:
         minimum = min(current_gyro_angle) # Get minimum item
         index = current_gyro_angle.index(minimum) # Find where the minimum item is in the list. This is also the axis.
         print(index)
+        index = 1
+        print(acceleration[1])
         # Get the current time.
         t = time.time_ns() / 1000000000
         # Recalculate velocity.
@@ -358,7 +373,7 @@ class Dino:
         # elif acceleration[2] < -5: # if acceleration < -4.8 m/s/s, the person is not jumping. TODO maybe change this to velocity later (separate thread constantly measuring velocity using V = Vsub0 + at)
         #     self.jumping = JumpType.NONE
         self.game.draw.rectangle([(18, self.jumping.value), (18 + 10 + 1, self.jumping.value + 11 + 1)], fill=0) # Erase the old dino
-        self.get_jump_height() # Update our jump height
+        # self.get_jump_height() # Update our jump height
         # self.get_gyro_angle() # Update our gyro angles
         if self.jump_height >= 0.3: # High jump >= 0.3 meters (about 1 foot)
             self.jumping = JumpType.HIGH
