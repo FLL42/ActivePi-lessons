@@ -41,23 +41,25 @@ font = ImageFont.truetype("Mario-Kart-DS.ttf", size=32)
 
 steps = 0 #steps
 
-threshold = 20 #this is the amount of acceleration needed to register as a step
+threshold = 2 #this is the amount of acceleration needed to register as a step
 steptrue = False #since our code is a while true to award someone a step when they meet the required acceleration,
 # the code still loops when the person IS STILL over the threshold to award a step
 #so if this is not there, the amount times the function loops while the person is still over the threshold will be how many steps are awarded,
 #not just 1 step each time it goes over
 #when someone takes a step, they are over the threshold for maybe .2 seconds, then they will get awarded steps of the number of times the loop runs in .2 seconds. 
 #if the bool is there, it awards only one step
+normal = 12 # normal value
 
 while True: #run forever
     sqrtof = (mpu.acceleration[0])**2 + (mpu.acceleration[1])**2 + (mpu.acceleration[2])**2 #total acceleration for all three axes
     totalaccel = math.sqrt(sqrtof) #this is the second part of the formula for the combined acceleration of all three axes
-    if totalaccel>threshold and steptrue == False: #When someone takes a step and the bool is false(meaning now it registers a step)
+    print(totalaccel)
+    if abs(totalaccel - normal)>threshold and steptrue == False: #When someone takes a step and the bool is false(meaning now it registers a step)
         steps = steps+1 # adds a step
         steptrue = 1 # sets the bool to true 
-    elif totalaccel>threshold and steptrue == True: #they still are over the threshold but have already met the condition before
+    elif abs(totalaccel-normal)>threshold and steptrue == True: #they still are over the threshold but have already met the condition before
         pass
-    if totalaccel<threshold and steptrue == True:   #the person was over the threshold but has now dipped under, setting the bool back to false
+    if abs(totalaccel-normal)<threshold and steptrue == True:   #the person was over the threshold but has now dipped under, setting the bool back to false
         steptrue = 0
 
         draw.rectangle((0, 0, width, height), outline=0, fill=0)
