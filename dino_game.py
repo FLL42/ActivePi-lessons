@@ -1,8 +1,8 @@
 # Import modules.
-import time, math, threading, random, numpy
+import time, math, threading, random, numpy, os
 from threading import Event
-from board import SCL, SDA
-import busio
+import board
+import busio, digitalio
 from PIL import Image, ImageDraw, ImageFont # sudo apt install python3-pil
 import adafruit_ssd1306 # sudo pip3 install adafruit-circuitpython-ssd1306
 import adafruit_mpu6050 # sudo pip3 install adafruit-circuitpython-mpu6050
@@ -77,7 +77,7 @@ def call_repeatedly(interval, function, *args):
     def loop():
         while not stopped.wait(interval): # wait until the interval has passed or until the flag has been set
             function(*args) # once one of those things has happened, call the function with the provided arguments
-    threading.Thread(target=loop).start() # start the loop in the background,    
+    threading.Thread(target=loop).start() # start the loop in the background,
     return stopped.set # and return the function to call to set the flag (described above)
 
 def bitmap(bmp):
@@ -92,7 +92,7 @@ def bitmap(bmp):
 class Game:
     def __init__(self, min_speed = 10, max_speed = 26):
         # Create I2C interfaces.
-        self.i2c_display = busio.I2C(SCL, SDA)
+        self.i2c_display = busio.I2C(board.SCL, board.SDA)
         self.i2c_accel = I2C(11) # GPIO23 = SDA, GPIO24 = SCL -- enable the i2c-gpio overlay!
 
         # Update minimum and maximum speeds (in pixels / second)
@@ -114,6 +114,11 @@ class Game:
 
         # Initialize the accelerometer.
         self.accelerometer = adafruit_mpu6050.MPU6050(self.i2c_accel)
+
+        # Initialize the UI button.
+        self.button = digitalio.DigitalInOut(board.D26)
+        self.button.direction = digitalio.Direction.INPUT
+        self.button.pull = digitalio.Pull.UP
 
         # Variable to hold acceleration (updated often from the MPU6050)
         self.acceleration = [0, 0, 0]
@@ -149,13 +154,14 @@ class Game:
         # Update display. (not the obstacles because we haven't started yet)
         self.update_display()
 
-        print("Calibrating gyro in 3 seconds. Please put the MPU6050 down on a flat surface with the Z axis (chip) pointing up.")
-        time.sleep(3)
+        if not self.dino.calibration_exists:
+            print("Calibrating gyro in 3 seconds. Please put the MPU6050 down on a flat surface with the Z axis (chip) pointing up.")
+            time.sleep(3)
         self.dino.calibrate()
 
-        # Start the game! Call the update() function every 0.05 seconds.
+        # Start the game! Call the update() function every 0.01 seconds.
         # This returns a function that will stop the loop.
-        self.stop1 = call_repeatedly(0.05, self.update)
+        self.stop1 = call_repeatedly(0.01, self.update)
 
         self.stop2 = call_repeatedly(0.0001, self.get_acceleration)
 
@@ -180,6 +186,55 @@ class Game:
         self.display.image(self.image)
         self.display.show()
 
+    def restart(self):
+        """
+        Restart game.
+        """
+        for obstacle in self.obstacles:
+            del obstacle
+
+        # Store dino's calibration value.
+        calibration = self.dino.calibration
+
+        del self.dino
+        # Create list of obstacles (empty to start)
+        self.obstacles = []
+
+        # Create a variable to hold the score
+        self.score = 0
+
+        # Create a dino 🦖
+        self.dino = Dino(self)
+
+        # Restore calibration
+        self.dino.calibration = calibration
+
+        # Reset speed.
+        self.current_speed = self.min_speed
+
+        # Variable to hold acceleration (updated often from the MPU6050)
+        self.acceleration = [0, 0, 0]
+
+        # Variable to hold gyro data (updated often from the MPU6050)
+        self.gyro = [0, 0, 0]
+
+        # Time that we last added an obstacle
+        self.last_added_obstacle = time.time_ns() / 1000000000
+
+        # Draw a black filled box to clear the image.
+        self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
+
+        # Draw the ground for the dino game (see where we make the bitmap on line 18). Fill = white (255). TODO get final line #
+        self.draw.bitmap((0, 27), bitmap(bitmaps["ground"]), fill=255)
+
+        # Update display. (not the obstacles because we haven't started yet)
+        self.update_display()
+
+        # Start the game!
+        self.stop1 = call_repeatedly(0.01, self.update)
+
+        self.stop2 = call_repeatedly(0.0001, self.get_acceleration)
+
     def detect_collision(self):
         """
         Detects if there was a collision between the dino and an obstacle.
@@ -203,8 +258,33 @@ class Game:
             if len(set(dino_pixels).intersection(obstacle_pixels)) > 0:
                 # If there is at least one set of coordinates overlapping the dino and the obstacle,
                 # game over!
-                print("game over!")
+                print("game over! single click the button to restart, hold down to exit")
+                # Draw a black filled box to clear the image.
+                self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
+                # Draw the final score.
+                font = ImageFont.truetype("Mario-Kart-DS.ttf", size=32)
+                self.draw.text((42,0), f'{self.score}', font=font, fill=255)
+                self.update_display()
+                # Stop the game.
                 self.stop()
+                button_pressed = float("inf")
+                start = time.time_ns() / 1000000000
+                while True:
+                    button_state = not self.button.value # We are inverting the button's state.
+                    # Because of the way the button is wired, not pressed = True and pressed = False.
+                    if button_state and button_pressed == float("inf"):
+                        button_pressed = time.time_ns() / 1000000000
+                    if (time.time_ns() / 1000000000) - start >= 10: # timeout, so end
+                        break
+                    if not button_state and button_pressed != float("inf"):
+                        t = (time.time_ns() / 1000000000)
+                        button_time_pressed = t - button_pressed
+                        if button_time_pressed > 1:
+                            break
+                        else:
+                            self.stop()
+                            self.restart()
+                            return False
                 return True
         return False
 
@@ -224,6 +304,10 @@ class Game:
             self.current_speed += 1
         for obstacle in self.obstacles:
             threading.Thread(target=obstacle.update).start()
+        if not self.detect_collision():
+            self.score += 1 # Increase the score by 1
+            self.draw.rectangle(((0, 0), (self.draw.textsize(f"{self.score}"))), fill=0)
+            self.draw.text((0, 0), f"{self.score}", fill=255)
         self.update_display()
 
 class ObstacleType(Enum):
@@ -233,8 +317,8 @@ class ObstacleType(Enum):
     The raw values are tuples in the format (obstacle_width, obstacle_height, bitmap).
     """
     SMALL = (5, 10, bitmaps["small_cactus"])
-    TALL = (7, 18, bitmaps["tall_cactus"])
-    WIDE = (17, 15, bitmaps["wide_cactus"])
+    # TALL = (7, 18, bitmaps["tall_cactus"])
+    # WIDE = (17, 15, bitmaps["wide_cactus"])
 
 class Obstacle:
     """
@@ -256,14 +340,12 @@ class Obstacle:
                 self.game.obstacles.remove(self) # remove it from the list of obstacles
             self.game.draw.bitmap((self.position, 27 - self.obstacle_type.value[1]), bitmap(self.obstacle_type.value[2]), fill=255) # Redraw the obstacle @ x = position, y = (27 (which is the top of the ground -- y = 0 is the top of the display) - the obstacle's height).
             self.last_update_time = time.time() # update the last updated time
-            if not self.game.detect_collision():
-                self.game.score += 1 # Increase the score by 1
 
 class JumpType(Enum): # An enum is basically a way to assign names to values.
     # Now we can use JumpType.HIGH and JumpType.LOW instead of some arbitrary variables.
     # The raw values are the height at which to draw the dino -- located at the top of the dino. (bottom of screen = 31, bottom of ground = 27, bottom of ground - height of dino = 16)
     LOW = 10
-    HIGH = 2
+    HIGH = 0
     NONE = 16
 
 class Dino:
@@ -307,7 +389,7 @@ class Dino:
         # acceleration[2] is the Z axis acceleration. -9.8 m/s^2 to adjust for gravity.
         # Please change 9.8 to 1.62 if you are using the ActivePi on the moon.
         # Or 3.711 if you're on Mars.
-        self.velocity = self.velocity + (acceleration[2] - self.calibration) * (t - self.last_measured_velocity) # m/s
+        self.velocity = self.velocity + -(acceleration[2] - self.calibration) * (t - self.last_measured_velocity) # m/s
         # Now calculate the jump height!
         self.jump_height = self.jump_height + self.velocity * (t - self.last_measured_velocity)
         # Finally, update the time last measured to `t`.
@@ -334,17 +416,29 @@ class Dino:
         # Finally, update the time last measured to `t`.
         self.last_measured_gyro = t
 
+    @property
+    def calibration_exists(self):
+        return os.path.exists("dino_calibration.txt")
+
     def calibrate(self):
         """
         Get the value of gravity for this particular accelerometer.
         """
         print("Calibrating accelerometer...")
-        total = 0
-        for i in range(100):
-            accel = self.game.accelerometer.acceleration
-            total += accel[2]
-        total /= 100.0
-        self.calibration = total
+        if os.path.exists("dino_calibration.txt"): # If the calibration data exists,
+            with open("dino_calibration.txt", "r") as f:
+                self.calibration = float(f.read()) # just use that.
+        else: # Else,
+            # calibrate ourselves.
+            total = 0
+            for i in range(100):
+                accel = self.game.accelerometer.acceleration
+                total += accel[2]
+            total /= 100.0
+            self.calibration = total
+            with open("dino_calibration.txt", "w") as f:
+                # And save.
+                f.write(f'{self.calibration}')
         print("Done, thank you!")
         print(f"Calibration: {self.calibration}")
 
