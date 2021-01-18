@@ -88,12 +88,13 @@ print("Data set randomization and splitting complete.")
 
 # build the model and train it
 model = tf.keras.Sequential()
-model.add(tf.keras.layers.Dense(50, activation='relu')) # relu is used for performance
-model.add(tf.keras.layers.Dense(25, activation='relu'))
-model.add(tf.keras.layers.Dense(12, activation='relu'))
+model.add(tf.keras.layers.LeakyReLU(alpha=0.072))
+model.add(tf.keras.layers.Dense(75, activation='relu'))
+model.add(tf.keras.layers.Dense(36, activation='relu'))
+model.add(tf.keras.layers.Dense(9, activation='relu'))
 model.add(tf.keras.layers.Dense(NUM_GESTURES, activation='softmax')) # softmax is used, because we only expect one gesture to occur per input
 model.compile(optimizer='rmsprop', loss='mse', metrics=['mae'])
-history = model.fit(inputs_train, outputs_train, epochs=600, batch_size=1, validation_data=(inputs_validate, outputs_validate))
+history = model.fit(inputs_train, outputs_train, epochs=600, batch_size=3, validation_data=(inputs_validate, outputs_validate))
 
 model.save('model.h5')
 
@@ -101,7 +102,12 @@ model.save('model.h5')
 predictions = model.predict(inputs_test)
 
 # print the predictions and the expected ouputs
-print("predictions =\n", np.round(predictions, decimals=3))
+print("predictions =\n", np.round(predictions, decimals=5))
 print("actual =\n", outputs_test)
 
-print(predictions, outputs_test)
+# Convert the model to the TensorFlow Lite format without quantization
+converter = tf.lite.TFLiteConverter.from_keras_model(model)
+tflite_model = converter.convert()
+
+# Save the model to disk
+open("model.tflite", "wb").write(tflite_model)
