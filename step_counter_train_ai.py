@@ -79,8 +79,8 @@ inputs = inputs[randomize]
 outputs = outputs[randomize]
 
 # Split the recordings (group of samples) into three sets: training, testing and validation
-TRAIN_SPLIT = int(0.8 * num_inputs)
-TEST_SPLIT = int(0.1 * num_inputs + TRAIN_SPLIT)
+TRAIN_SPLIT = int(0.6 * num_inputs)
+TEST_SPLIT = int(0.2 * num_inputs + TRAIN_SPLIT)
 
 inputs_train, inputs_test, inputs_validate = np.split(inputs, [TRAIN_SPLIT, TEST_SPLIT])
 outputs_train, outputs_test, outputs_validate = np.split(outputs, [TRAIN_SPLIT, TEST_SPLIT])
@@ -89,26 +89,42 @@ print("Data set randomization and splitting complete.")
 
 # build the model and train it
 model = tf.keras.Sequential()
+model.add(tf.keras.layers.LeakyReLU(alpha=0.18, input_shape=(600,)))
+model.add(tf.keras.layers.Reshape((100, 6)))
+model.add(tf.keras.layers.Conv1D(50, 3, activation='relu'))
+model.add(tf.keras.layers.Conv1D(50, 3, activation='relu'))
+model.add(tf.keras.layers.MaxPool1D(3))
+model.add(tf.keras.layers.Conv1D(50, 3, activation='relu'))
+model.add(tf.keras.layers.Conv1D(50, 3, activation='relu'))
+model.add(tf.keras.layers.MaxPool1D(3))
+model.add(tf.keras.layers.Conv1D(50, 3, activation='relu'))
+model.add(tf.keras.layers.Conv1D(50, 3, activation='relu'))
+model.add(tf.keras.layers.MaxPool1D(2))
+model.add(tf.keras.layers.Flatten())
 model.add(tf.keras.layers.LeakyReLU(alpha=0.18))
-model.add(tf.keras.layers.Dense(75, activation='relu'))
-model.add(tf.keras.layers.Dense(36, activation='relu'))
-model.add(tf.keras.layers.Dense(9, activation='relu'))
+model.add(tf.keras.layers.Dense(50, activation='relu'))
+model.add(tf.keras.layers.Dropout(0.2))
+model.add(tf.keras.layers.Dense(18, activation='relu'))
+model.add(tf.keras.layers.Dropout(0.2))
 model.add(tf.keras.layers.Dense(NUM_GESTURES, activation='softmax')) # softmax is used, because we only expect one gesture to occur per input
-model.compile(optimizer='rmsprop', loss='mse', metrics=['mae'])
-history = model.fit(inputs_train, outputs_train, epochs=300, batch_size=5, validation_data=(inputs_validate, outputs_validate))
+model.compile(optimizer='adam', loss='mse', metrics=['acc', 'mae'])
+model.summary()
+history = model.fit(inputs_train, outputs_train, epochs=50, batch_size=1, validation_data=(inputs_validate, outputs_validate))
+
+model.summary()
 
 # increase the size of the graphs. The default size is (6,4).
 plt.rcParams["figure.figsize"] = (20,10)
 
 # graph the loss, the model above is configure to use "mean squared error" as the loss function
-loss = history.history['loss']
-val_loss = history.history['val_loss']
-epochs = range(1, len(loss) + 1)
-plt.plot(epochs, loss, 'g.', label='Training loss')
-plt.plot(epochs, val_loss, 'b', label='Validation loss')
-plt.title('Training and validation loss')
+acc = history.history['acc']
+val_acc = history.history['val_acc']
+epochs = range(1, len(acc) + 1)
+plt.plot(epochs, acc, 'g', label='Training accuracy')
+plt.plot(epochs, val_acc, 'b', label='Validation accuracy')
+plt.title('Training and validation accuracy')
 plt.xlabel('Epochs')
-plt.ylabel('Loss')
+plt.ylabel('Accuracy')
 plt.legend()
 plt.show()
 
@@ -130,9 +146,13 @@ for i in range(len(predictions)):
 
 # Plot the predictions along with to the test data
 plt.clf()
-plt.title('Training data predicted vs actual values')
-plt.plot(inputs_test, outputs_test, 'b.', label='Actual')
-plt.plot(inputs_test, predictions, 'r.', label='Predicted')
+plt.title('Training data predicted vs actual values, difference -- 0 is best')
+plt.plot(range(len(predictions)), [abs(predictions[i] - outputs_test[i]) for i in range(len(predictions))], 'y.', label='difference')
+mean = 0
+for i in [abs(predictions[i] - outputs_test[i]) for i in range(len(predictions))]:
+  mean += i
+mean /= len(predictions)
+plt.plot([0, len(predictions) - 1], [mean, mean], 'b', label='mean')
 plt.show()
 
 # Convert the model to the TensorFlow Lite format without quantization

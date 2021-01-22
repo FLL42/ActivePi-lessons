@@ -1,12 +1,28 @@
 from adafruit_extended_bus import ExtendedI2C as I2C # sudo pip3 install adafruit-extended-bus
 import adafruit_mpu6050 # sudo pip3 install adafruit-circuitpython-mpu6050
-import board, digitalio, math, time
+import board, digitalio, busio, math, time
 import numpy as np
 from tensorflow import lite as tflite
+import adafruit_ssd1306
+from PIL import Image, ImageDraw, ImageFont
 
-i2c = I2C(11)
+i2c_accel = I2C(11)
+i2c_display = busio.I2C(board.SCL, board.SDA)
 
-accelerometer = adafruit_mpu6050.MPU6050(i2c)
+accelerometer = adafruit_mpu6050.MPU6050(i2c_accel)
+
+display = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c_display)
+
+width = display.width
+height = display.height
+
+image = Image.new('1', (width, height))
+
+draw = ImageDraw.Draw(image)
+
+draw.rectangle((0, 0, width, height), outline=0, fill=0)
+
+font = ImageFont.truetype("Mario-Kart-DS.ttf", size=32)
 
 print("Calibration time!")
 calibration = []
@@ -26,7 +42,7 @@ def calibrate():
 
 calibrate()
 
-threshold = 5 # m / s^2
+threshold = 2 # m / s^2
 
 samples = 100
 
@@ -71,11 +87,7 @@ def infer(sample_list):
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
-    print(input_details)
-
     sample_list = np.array(np.asarray(sample_list, dtype=np.float32))
-    print(sample_list.dtype)
-    print(sample_list.shape)
 
     interpreter.set_tensor(input_details[0]['index'], [sample_list])
 
@@ -91,7 +103,11 @@ sample_list = []
 def check():
     sample = accelerometer.acceleration
     if total_acceleration(subtract_lists(sample, calibration)) > threshold:
-        print(infer(get_sample()))
+        result = infer(get_sample())
+        draw.rectangle((0, 0, width, height), outline=0, fill=0)
+        draw.text((42,0), f'{round(list(result[0])[0] * 100, ndigits=1)}%', font=font, fill=255)
+        display.image(image)
+        display.show()
 
 print("hi!")
 
