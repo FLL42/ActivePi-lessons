@@ -11,6 +11,11 @@ from enum import Enum # An enum is a way to use names instead of numbers, basica
 
 ## This program uses Adafruit's libraries to run CircuitPython on Raspberry Pi -- there are multiple ways to control GPIO pins/I2C and this is one of them.
 
+SCREEN_RECORD = False # Should we record a .gif of the first round?
+NO_SPEED_INCREASE = False # Used with SCREEN_RECORD to make it so that
+# the speed of the game doesn't change and the GIF timing is accurate.
+# This option is not recommended for normal gameplay, as it makes you less active.
+
 # This is a dictionary of bitmaps (so just arrays of image data) to display.
 bitmaps = {}
 
@@ -35,6 +40,8 @@ bitmaps["dino_run_1"] = [[0, 0, 0, 0, 0, 1, 1, 1, 1, 0], [0, 0, 0, 0, 1, 1, 1, 1
 
 # Dinosaur running, bitmap 2 (width = 10, height = 11)
 bitmaps["dino_run_2"] = [[0, 0, 0, 0, 0, 1, 1, 1, 1, 0], [0, 0, 0, 0, 1, 1, 1, 1, 1, 1], [0, 0, 0, 0, 1, 1, 0, 1, 1, 1], [1, 0, 0, 0, 1, 1, 1, 1, 1, 0], [1, 1, 0, 1, 1, 1, 1, 1, 0, 0], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 0, 1], [0, 1, 1, 1, 1, 1, 1, 0, 0, 0], [0, 0, 1, 0, 0, 1, 0, 0, 0, 0], [0, 0, 1, 1, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 1, 0, 0, 0]]
+if SCREEN_RECORD:
+    screen_recording = []
 
 ### DEBUGGING FOR BITMAPS ###
 def print_bitmap(bmp):
@@ -159,6 +166,9 @@ class Game:
             time.sleep(3)
         self.dino.calibrate()
 
+        # Time that the game started (for screen recording)
+        self.start = time.time_ns() / 1000000 # milliseconds
+
         # Start the game! Call the update() function every 0.01 seconds.
         # This returns a function that will stop the loop.
         self.stop1 = call_repeatedly(0.01, self.update)
@@ -259,6 +269,7 @@ class Game:
                 # If there is at least one set of coordinates overlapping the dino and the obstacle,
                 # game over!
                 print("game over! single click the button to restart, hold down to exit")
+                self.duration = time.time_ns() / 1000000 - self.start
                 # Draw a black filled box to clear the image.
                 self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
                 # Draw the final score.
@@ -285,6 +296,8 @@ class Game:
                             self.stop()
                             self.restart()
                             return False
+                if SCREEN_RECORD:
+                    screen_recording[0].save('screen_recording.gif', save_all=True, optimize=False, duration=self.duration / len(screen_recording), loop=0, append_images=screen_recording[1:])
                 return True
         return False
 
@@ -301,13 +314,16 @@ class Game:
             obstacle = Obstacle(self, obstacle_type=obstacle_type)
             self.obstacles.append(obstacle)
             self.last_added_obstacle = current_time
-            self.current_speed += 1
+            if SCREEN_RECORD and NO_SPEED_INCREASE:
+                self.current_speed += 1
         for obstacle in self.obstacles:
-            threading.Thread(target=obstacle.update).start()
+            obstacle.update()
         if not self.detect_collision():
             self.score += 1 # Increase the score by 1
             self.draw.rectangle(((0, 0), (self.draw.textsize(f"{self.score}"))), fill=0)
             self.draw.text((0, 0), f"{self.score}", fill=255)
+        if SCREEN_RECORD:
+            screen_recording.append(self.image.convert('P'))
         self.update_display()
 
 class ObstacleType(Enum):
